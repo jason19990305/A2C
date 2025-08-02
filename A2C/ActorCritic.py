@@ -39,7 +39,7 @@ class Critic(nn.Module):
         self.num_states = args.num_states
         self.num_actions = args.num_actions
         # add in list
-        hidden_layers.insert(0,self.num_states+self.num_actions)
+        hidden_layers.insert(0,self.num_states)
         hidden_layers.append(1)
         print(hidden_layers)
 

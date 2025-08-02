@@ -8,7 +8,7 @@ from A2C.Agent import Agent
 class main():
     def __init__(self , args):
         
-        env_name = 'Acrobot-v1'
+        env_name = 'CartPole-v1'
         env = gym.make(env_name)
         
         args.num_states = env.observation_space.shape[0]
@@ -35,7 +35,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for A2C")
     parser.add_argument("--evaluate_freq_steps", type=float, default=5e3, help="Evaluate the policy every 'evaluate_freq' steps")
     parser.add_argument("--max_train_steps", type=int, default=2e5, help="Set the number of steps used for training the agent")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=3, help="Batch size")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for optimizer")
     

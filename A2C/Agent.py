@@ -1,149 +1,160 @@
 from A2C.ReplayBuffer import ReplayBuffer
-from A2C.ActorCritic import Network
+from A2C.ActorCritic import Actor,Critic
 import numpy as np
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import time
 
 class Agent():
     def __init__(self , args , env , hidden_layer_list=[64,64]):
         # Hyperparameter
-        self.training_episodes = args.training_episodes
-        self.advantage = args.advantage
-        self.num_states = args.num_states
+        self.max_train_steps = args.max_train_steps
+        self.evaluate_freq_steps = args.evaluate_freq_steps
         self.num_actions = args.num_actions
-        self.epochs = args.epochs
+        self.num_states = args.num_states
+        self.gamma = args.gamma
+        self.batch_size = args.batch_size
         self.lr = args.lr     
         
         # Variable
         self.episode_count = 0
-        
+        self.total_steps = 0
+        self.evaluate_count = 0
+
                 
         # other
         self.env = env
+        self.env_eval = copy.deepcopy(env)
         self.replay_buffer = ReplayBuffer(args)
+        
+        
         # The model interacts with the environment and gets updated continuously
-        self.actor = Network(args , hidden_layer_list.copy())
+        self.actor = Actor(args , hidden_layer_list.copy())
+        self.critic = Critic(args , hidden_layer_list.copy())
         print(self.actor)
+        print(self.critic)
 
-        self.optimizer = torch.optim.Adam(self.actor.parameters() , lr = self.lr , eps=1e-5)
+        self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), lr=self.lr, eps=1e-5)
+        self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=self.lr, eps=1e-5)
         
         
     def choose_action(self, state):
+        state = torch.tensor(state, dtype=torch.float)
+
         with torch.no_grad():
-            state = torch.unsqueeze(torch.tensor(state), dim=0)
-            action_probability = self.actor(state).numpy().flatten()
+            s = torch.unsqueeze(state, dim=0)
+            action_probability = self.actor(s).numpy().flatten()
             action = np.random.choice(self.num_actions, p=action_probability)
         return action
 
     def evaluate_action(self, state):
+        state = torch.tensor(state, dtype=torch.float)
         with torch.no_grad():
-            # choose the action that have max q value by current state
-            state = torch.unsqueeze(torch.tensor(state), dim=0)
-            action_probability = self.actor(state)
+            s = torch.unsqueeze(state, dim=0)
+            action_probability = self.actor(s)
             action =  torch.argmax(action_probability).item()
         return action
         
     def train(self):
-        episode_reward_list = []
-        episode_count_list = []
-        episode_count = 0
+        time_start = time.time()
+        epoch_reward_list = []
+        epoch_count_list = []
+        epoch_count = 0
         # Training loop
-        for epoch in range(self.epochs):
+        while self.total_steps < self.max_train_steps:
             # reset environment
-            state, info = self.env.reset()
-            done = False
-            while not done:
-                
-                action = self.choose_action(state)
+            s, info = self.env.reset()
 
+            while True:                
+                a = self.choose_action(s)
                 # interact with environment
-                next_state , reward , terminated, truncated, _ = self.env.step(action)   
-                done = terminated or truncated
-                self.replay_buffer.store(state, action, [reward], next_state, [done])
-
-                state = next_state
-            self.replay_buffer.to_episode_batch()  # Convert to episode batch
-            if (epoch + 1)% self.training_episodes == 0 and epoch != 0:
-                # Update the model
-                self.update()
-                self.replay_buffer.clear_episode_batch()  # Clear the episode batch after updating
-            if epoch % 10 == 0:
-                evaluate_reward = self.evaluate(self.env)
-                print("Epoch : %d / %d\t Reward : %0.2f"%(epoch,self.epochs , evaluate_reward))
-                episode_reward_list.append(evaluate_reward)
-                episode_count_list.append(episode_count)
-
-            episode_count += 1
+                s_ , r , done, truncated, _ = self.env.step(a)   
+                done = done or truncated
+                # stoare transition in replay buffer
+                self.replay_buffer.store(s, a, [r], s_, [done])
+                # update state
+                s = s_
+                
+                if self.replay_buffer.count >= self.batch_size:
+                    self.update()
+                    epoch_count += 1
+            
+                if self.total_steps % self.evaluate_freq_steps == 0:
+                    self.evaluate_count += 1
+                    evaluate_reward = self.evaluate(self.env_eval)
+                    epoch_reward_list.append(evaluate_reward)
+                    epoch_count_list.append(epoch_count)
+                    time_end = time.time()
+                    h = int((time_end - time_start) // 3600)
+                    m = int(((time_end - time_start) % 3600) // 60)
+                    second = int((time_end - time_start) % 60)
+                    print("---------")
+                    print("Time : %02d:%02d:%02d"%(h,m,second))
+                    print("Training epoch : %d\tStep : %d / %d"%(epoch_count,self.total_steps,self.max_train_steps))
+                    print("Evaluate count : %d\tEvaluate reward : %0.2f"%(self.evaluate_count,evaluate_reward))
+                    
+                self.total_steps += 1
+                if done or truncated :
+                    break
+            epoch_count += 1
 
         # Plot the training curve
-        plt.plot(episode_count_list, episode_reward_list)
+        plt.plot(epoch_count_list, epoch_reward_list)
         plt.xlabel("Episode")
         plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
         
     def update(self):
-        loss = 0
-        base_line = 0
-        for batch in self.replay_buffer.episode_batch:
-            s, a, r, s_, done = batch
-            base_line += self.TotalReward(r) 
-        base_line /= self.replay_buffer.episode_count  # Normalize baseline by number of episodes
-        for batch in self.replay_buffer.episode_batch:
-            s, a, r, s_, done = batch
-            a = a.view(-1, 1)  # Reshape action from (N) -> (N, 1) for gathering            
-            if self.advantage == 0:
-                adv = self.TotalReward(r)
-            elif self.advantage == 1:
-                adv = self.RewardFollowing(r)
-            elif self.advantage == 2:
-                adv = self.RewardFollowing(r)
-                adv = adv - base_line
-            #print(adv)
-            prob = self.actor(s).gather(dim=1, index=a)  # Get action probability from the model
-            log_prob = torch.log(prob + 1e-10)  # Add small value to avoid log(0)
-            loss += (adv * log_prob).sum()  
-        loss = - loss / self.replay_buffer.episode_count  # Normalize loss by number of episodes
+        s, a, r, s_, done = self.replay_buffer.numpy_to_tensor()
         
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
+        a = a.view(-1, 1)  # Reshape action from (N) -> (N, 1) for gathering
         
-        
-        
-    def evaluate(self, env):
-        render_env = env
-
-        reward_list = []
-        for i in range(5):
-            # reset environment
-            state, info = render_env.reset()
-            done = False
-            episode_reward = 0
-
-            while not done:                
-                action = self.evaluate_action(state)
-                
-                # interact with environment
-                next_state , reward , terminated, truncated, _ = render_env.step(action)
-                    
-                done = terminated or truncated
-                state = next_state
-                episode_reward += reward
+        # get target value and advantage
+        value = self.critic(s)
+        with torch.no_grad():            
+            next_value = self.critic(s_)
+            target_value = r + self.gamma * next_value * (1 - done)
+            advantage = target_value - value # baseline advantage
             
-            reward_list.append(episode_reward)
-        reward_list = np.array(reward_list)
-        return reward_list.mean()
+        # Update critic
+        critic_loss = F.mse_loss(value, target_value)  # Mean Squared Error loss
+        self.optimizer_critic.zero_grad()
+        critic_loss.backward()  # Backpropagation
+        self.optimizer_critic.step()
+        
+        # Update actor
+        prob = self.actor(s).gather(dim=1, index=a)  # Get action probability from the model
+        log_prob = torch.log(prob + 1e-10)  # Add small value to avoid log(0)
+        actor_loss = (-advantage * log_prob).mean()  # Calculate loss
+        self.optimizer_actor.zero_grad()
+        actor_loss.backward()  # Backpropagation
+        self.optimizer_actor.step()
+        
+        
+        
+        
+    def evaluate(self , env):
+        times = 10
+        evaluate_reward = 0
+        
+        for i in range(times):
+            s , info = env.reset()
+            episode_reward = 0
+            while True:
+                a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
+                s_, r, done, truncted, _ = env.step(a)
+
+               
+                episode_reward += r
+                s = s_
+                
+                if truncted or done:
+                    break
+            evaluate_reward += episode_reward
+
+        return evaluate_reward / times
     
-    def TotalReward(self, reward):
-        return reward.sum()
-    
-    def RewardFollowing(self , reward):
-        flip_reward = reward.flip(dims=[0])
-        reward_following = flip_reward.cumsum(dim=0)  # Cumulative sum in reverse order
-        adv = reward_following.flip(dims=[0])
-        return adv
