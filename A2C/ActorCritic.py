@@ -24,6 +24,7 @@ class Actor(nn.Module):
 
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=1) # Softmax for action probabilities
+        
     def forward(self, x):
         # Pass input through all layers except the last, applying ReLU activation
         for i in range(len(self.layers) - 1):
@@ -54,12 +55,12 @@ class Critic(nn.Module):
             layer_list.append(layer)
         # put in ModuleList
         self.layers = nn.ModuleList(layer_list)
-        self.tanh = nn.Tanh()
+        self.relu = nn.ReLU()
 
     def forward(self,x):
         
         for i in range(len(self.layers)-1):
-            x = self.tanh(self.layers[i](x))
+            x = self.relu(self.layers[i](x))
 
         # predicet value
         v_s = self.layers[-1](x)
