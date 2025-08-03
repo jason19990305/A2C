@@ -55,12 +55,12 @@ class Critic(nn.Module):
             layer_list.append(layer)
         # put in ModuleList
         self.layers = nn.ModuleList(layer_list)
-        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
 
     def forward(self,x):
         
         for i in range(len(self.layers)-1):
-            x = self.relu(self.layers[i](x))
+            x = self.tanh(self.layers[i](x))
 
         # predicet value
         v_s = self.layers[-1](x)
