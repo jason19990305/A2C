@@ -103,7 +103,7 @@ class Agent():
 
         # Plot the training curve
         plt.plot(epoch_count_list, epoch_reward_list)
-        plt.xlabel("Episode")
+        plt.xlabel("Epoch")
         plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
